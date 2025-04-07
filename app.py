@@ -6,6 +6,7 @@ import pandas as pd
 from io import BytesIO
 from datetime import datetime
 import base64
+import json
 
 # --- Gemini Setup ---
 if "GEMINI_API_KEY" not in st.secrets:
@@ -26,27 +27,31 @@ def extract_text(file):
 
 def analyze_resume(jd, resume_text):
     prompt = f"""
-    Analyze this resume against the job description:
+    Analyze this resume against the job description below.
 
-    Job Requirements:
+    JOB DESCRIPTION:
     {jd}
 
-    Resume:
+    RESUME:
     {resume_text}
 
-    Return response as a JSON with:
-    - "score" (0-100)
-    - "matches" (top 3 matching skills)
-    - "gaps" (top 3 missing skills)
-    - "summary" (3 concise bullet points)
+    Respond ONLY in valid JSON with the following structure:
+    {{
+      "score": integer (0-100),
+      "matches": ["skill1", "skill2", "skill3"],
+      "gaps": ["gap1", "gap2", "gap3"],
+      "summary": ["point1", "point2", "point3"]
+    }}
     """
     try:
         response = model.generate_content(prompt)
-        return eval(response.text)
+        return json.loads(response.text)
+    except json.JSONDecodeError:
+        st.error("Gemini returned invalid JSON. Try again or rephrase the JD/resume.")
     except Exception as e:
         st.error(f"Analysis failed: {str(e)}")
-        return None
-
+    return None
+    
 def generate_email(candidate, jd):
     prompt = f"""
     Write a professional recruiter outreach email for:
