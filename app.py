@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit as st 
 import google.generativeai as genai
 import docx2txt
 import PyPDF2
@@ -58,30 +58,31 @@ def generate_email(candidate, jd):
     """
     return model.generate_content(prompt).text
 
-# --- UI Flow ---
+# --- Streamlit UI ---
 st.set_page_config(layout="wide", page_title="RecruitAI Pro")
 st.title("🚀 RecruitAI Pro - End-to-End Hiring Assistant")
 
-# --- Step 1: Upload JD ---
+# --- Step 1: Upload Job Description ---
 with st.expander("📋 1. Upload Job Description", expanded=True):
-    jd_file = st.file_uploader("Upload JD (PDF/DOCX)", type=["pdf","docx"], key="jd")
-    if jd_file:
+    jd_file = st.file_uploader("Upload JD (PDF/DOCX)", type=["pdf", "docx"], key="jd_file")
+    
+    if jd_file and "jd" not in st.session_state:
         jd_text = extract_text(jd_file)
         st.session_state.jd = jd_text
+    
+    if "jd" in st.session_state:
         with st.expander("View Parsed JD"):
-            st.write(jd_text[:2000] + "...")
+            st.write(st.session_state.jd[:2000] + "...")
 
-# --- Step 2: Batch Resume Processing ---
-if 'jd' in st.session_state:
+# --- Step 2: Batch Resume Upload & Analysis ---
+if "jd" in st.session_state:
     with st.expander("📚 2. Upload Resumes (Batch)", expanded=True):
-        resumes = st.file_uploader("Upload Multiple Resumes", 
-                                 type=["pdf","docx","txt"], 
-                                 accept_multiple_files=True)
+        resumes = st.file_uploader("Upload Multiple Resumes", type=["pdf", "docx", "txt"], accept_multiple_files=True)
         
         if resumes and st.button("Analyze Batch"):
             st.session_state.candidates = []
             with st.spinner(f"Processing {len(resumes)} resumes..."):
-                for i, resume in enumerate(resumes):
+                for resume in resumes:
                     with st.status(f"Analyzing {resume.name}..."):
                         text = extract_text(resume)
                         analysis = analyze_resume(st.session_state.jd, text)
@@ -92,38 +93,37 @@ if 'jd' in st.session_state:
                             st.json(analysis)
 
 # --- Step 3: Results Dashboard ---
-if 'candidates' in st.session_state:
+if "candidates" in st.session_state:
     st.divider()
     st.subheader("📊 3. Candidate Evaluation Dashboard")
-    
-    # Convert to DataFrame
+
     df = pd.DataFrame(st.session_state.candidates)
-    df = df[['name','score','matches','gaps']]
-    
-    # Interactive table
-    st.dataframe(df.sort_values('score', ascending=False), 
-                use_container_width=True,
-                column_config={
-                    "score": st.column_config.ProgressColumn(
-                        "Match Score",
-                        help="JD match percentage",
-                        format="%d%%",
-                        min_value=0,
-                        max_value=100,
-                    )
-                })
-    
-    # Candidate drill-down
+    df = df[['name', 'score', 'matches', 'gaps']]
+
+    st.dataframe(
+        df.sort_values("score", ascending=False),
+        use_container_width=True,
+        column_config={
+            "score": st.column_config.ProgressColumn(
+                "Match Score",
+                help="JD match percentage",
+                format="%d%%",
+                min_value=0,
+                max_value=100,
+            )
+        }
+    )
+
     selected = st.selectbox("View details", df['name'])
     candidate = next(c for c in st.session_state.candidates if c['name'] == selected)
-    
+
     col1, col2 = st.columns(2)
     with col1:
         st.markdown(f"### {selected} ({candidate['score']}/100)")
         st.markdown("**✅ Matches:** " + ", ".join(candidate['matches']))
         st.markdown("**⚠️ Gaps:** " + ", ".join(candidate['gaps']))
         st.text_area("Summary", candidate['summary'], height=150)
-    
+
     with col2:
         st.markdown("### ✉️ Outreach Tools")
         if st.button("Generate Email Template"):
@@ -133,24 +133,22 @@ if 'candidates' in st.session_state:
             st.download_button("Download Email", st.session_state.email, file_name=f"email_{selected}.txt")
 
 # --- Step 4: Export ---
-if 'candidates' in st.session_state:
+if "candidates" in st.session_state:
     st.divider()
     with st.expander("📤 4. Export Results"):
-        # Excel Export
-        excel = df.to_excel(index=False)
-        b64 = base64.b64encode(excel).decode()
+        excel_data = df.to_excel(index=False)
+        b64 = base64.b64encode(excel_data).decode()
         st.download_button(
             label="📥 Export to Excel",
-            data=excel,
+            data=excel_data,
             file_name=f"candidate_report_{datetime.now().date()}.xlsx",
             mime="application/vnd.ms-excel"
         )
-        
-        # ATS Integration Placeholder
-        st.markdown("### 🔗 ATS Integration")
+
+        st.markdown("### 🔗 ATS Integration (Mock)")
         st.selectbox("Select ATS", ["Greenhouse", "Lever", "Workday"])
         st.button("Sync Selected Candidates")
 
-# --- Debug Section ---
+# --- Debug Info ---
 with st.expander("Debug"):
     st.write(st.session_state)
