@@ -139,14 +139,19 @@ if 'candidates' in st.session_state:
     st.header("📤 Step 4: Export Results")
 
     df = pd.DataFrame(st.session_state.candidates)
-    excel = df.to_excel(index=False, engine='openpyxl')
-    b64 = base64.b64encode(excel).decode()
+    from io import BytesIO
 
-    st.download_button("📥 Export to Excel",
-        data=excel,
-        file_name=f"candidate_report_{datetime.now().date()}.xlsx",
-        mime="application/vnd.ms-excel"
-    )
+excel_buffer = BytesIO()
+df.to_excel(excel_buffer, index=False, engine='openpyxl')
+excel_buffer.seek(0)
+
+st.download_button(
+    label="📥 Export to Excel",
+    data=excel_buffer,
+    file_name=f"candidate_report_{datetime.now().date()}.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
+
 
     st.subheader("🔗 ATS Integration (Mockup)")
     st.selectbox("Choose ATS", ["Greenhouse", "Lever", "Workday"])
