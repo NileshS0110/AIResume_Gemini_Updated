@@ -52,7 +52,7 @@ def generate_email(candidate, jd):
     Write a professional outreach email for this candidate:
     Name: {candidate.get('name', 'Candidate')}
     Score: {candidate['score']}/100
-    Matches: {', '.join(candidate['matches']}
+    Matches: {', '.join(candidate['matches'])}
     
     Job: {jd}
     """
