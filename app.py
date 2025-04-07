@@ -1,15 +1,14 @@
-import streamlit as st 
+import streamlit as st
 import google.generativeai as genai
 import docx2txt
 import PyPDF2
 import pandas as pd
 import base64
 from datetime import datetime
-import re
 
 # --- Gemini Setup ---
 if "GEMINI_API_KEY" not in st.secrets:
-    st.error("API key missing! Add to Streamlit Secrets.")
+    st.error("API key missing! Add GEMINI_API_KEY to Streamlit Secrets.")
     st.stop()
 
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
@@ -27,13 +26,13 @@ def extract_text(file):
 def analyze_resume(jd, resume_text):
     prompt = f"""
     Analyze this resume against the job description:
-    
+
     Job Requirements:
     {jd}
-    
+
     Resume:
     {resume_text}
-    
+
     Return as JSON with:
     - "score" (0-100)
     - "matches" (top 3 skills)
@@ -42,7 +41,7 @@ def analyze_resume(jd, resume_text):
     """
     try:
         response = model.generate_content(prompt)
-        return eval(response.text)  # Convert JSON string to dict
+        return eval(response.text)  # Not safe for production, replace with json.loads() if JSON
     except Exception as e:
         st.error(f"Analysis failed: {str(e)}")
         return None
@@ -53,47 +52,46 @@ def generate_email(candidate, jd):
     Name: {candidate.get('name', 'Candidate')}
     Score: {candidate['score']}/100
     Matches: {', '.join(candidate['matches'])}
-    
+
     Job: {jd}
     """
     return model.generate_content(prompt).text
 
-# --- Streamlit UI ---
+# --- Page Config ---
 st.set_page_config(layout="wide", page_title="RecruitAI Pro")
 st.title("🚀 RecruitAI Pro - End-to-End Hiring Assistant")
 
 # --- Step 1: Upload Job Description ---
 with st.expander("📋 1. Upload Job Description", expanded=True):
     jd_file = st.file_uploader("Upload JD (PDF/DOCX)", type=["pdf", "docx"], key="jd_file")
-    
+
     if jd_file and "jd" not in st.session_state:
         jd_text = extract_text(jd_file)
         st.session_state.jd = jd_text
-    
+
     if "jd" in st.session_state:
-        with st.expander("View Parsed JD"):
-            st.write(st.session_state.jd[:2000] + "...")
+        st.markdown("**Parsed JD Preview:**")
+        st.text_area("Job Description", st.session_state.jd[:2000], height=200)
 
-# --- Step 2: Batch Resume Upload & Analysis ---
-if "jd" in st.session_state:
-    with st.expander("📚 2. Upload Resumes (Batch)", expanded=True):
+# --- Step 2: Batch Resume Upload ---
+if 'jd' in st.session_state:
+    with st.expander("📚 2. Upload Resumes for Analysis", expanded=True):
         resumes = st.file_uploader("Upload Multiple Resumes", type=["pdf", "docx", "txt"], accept_multiple_files=True)
-        
-        if resumes and st.button("Analyze Batch"):
-            st.session_state.candidates = []
-            with st.spinner(f"Processing {len(resumes)} resumes..."):
-                for resume in resumes:
-                    with st.status(f"Analyzing {resume.name}..."):
-                        text = extract_text(resume)
-                        analysis = analyze_resume(st.session_state.jd, text)
-                        if analysis:
-                            analysis['name'] = resume.name.split('.')[0]
-                            analysis['resume'] = text[:500] + "..."
-                            st.session_state.candidates.append(analysis)
-                            st.json(analysis)
 
-# --- Step 3: Results Dashboard ---
-if "candidates" in st.session_state:
+        if resumes and st.button("Analyze All Resumes"):
+            st.session_state.candidates = []
+            with st.spinner("Analyzing resumes..."):
+                for resume in resumes:
+                    text = extract_text(resume)
+                    analysis = analyze_resume(st.session_state.jd, text)
+                    if analysis:
+                        analysis['name'] = resume.name.split('.')[0]
+                        analysis['resume'] = text[:500] + "..."
+                        st.session_state.candidates.append(analysis)
+                        st.success(f"{resume.name} analyzed.")
+
+# --- Step 3: Evaluation Dashboard ---
+if 'candidates' in st.session_state:
     st.divider()
     st.subheader("📊 3. Candidate Evaluation Dashboard")
 
@@ -101,7 +99,7 @@ if "candidates" in st.session_state:
     df = df[['name', 'score', 'matches', 'gaps']]
 
     st.dataframe(
-        df.sort_values("score", ascending=False),
+        df.sort_values('score', ascending=False),
         use_container_width=True,
         column_config={
             "score": st.column_config.ProgressColumn(
@@ -114,7 +112,7 @@ if "candidates" in st.session_state:
         }
     )
 
-    selected = st.selectbox("View details", df['name'])
+    selected = st.selectbox("🔍 View Candidate Details", df['name'])
     candidate = next(c for c in st.session_state.candidates if c['name'] == selected)
 
     col1, col2 = st.columns(2)
@@ -128,27 +126,28 @@ if "candidates" in st.session_state:
         st.markdown("### ✉️ Outreach Tools")
         if st.button("Generate Email Template"):
             st.session_state.email = generate_email(candidate, st.session_state.jd)
+
         if 'email' in st.session_state:
             st.text_area("Email Draft", st.session_state.email, height=200)
             st.download_button("Download Email", st.session_state.email, file_name=f"email_{selected}.txt")
 
 # --- Step 4: Export ---
-if "candidates" in st.session_state:
+if 'candidates' in st.session_state:
     st.divider()
     with st.expander("📤 4. Export Results"):
-        excel_data = df.to_excel(index=False)
-        b64 = base64.b64encode(excel_data).decode()
+        excel = df.to_excel(index=False)
+        b64 = base64.b64encode(excel).decode()
         st.download_button(
             label="📥 Export to Excel",
-            data=excel_data,
+            data=excel,
             file_name=f"candidate_report_{datetime.now().date()}.xlsx",
             mime="application/vnd.ms-excel"
         )
 
-        st.markdown("### 🔗 ATS Integration (Mock)")
+        st.markdown("### 🔗 ATS Integration")
         st.selectbox("Select ATS", ["Greenhouse", "Lever", "Workday"])
         st.button("Sync Selected Candidates")
 
-# --- Debug Info ---
-with st.expander("Debug"):
+# --- Debug ---
+with st.expander("🛠 Debug"):
     st.write(st.session_state)
