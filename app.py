@@ -4,12 +4,12 @@ import docx2txt
 import PyPDF2
 import pandas as pd
 import base64
+import json
 from datetime import datetime
-import re
 
 # --- Gemini Setup ---
 if "GEMINI_API_KEY" not in st.secrets:
-    st.error("API key missing! Add to Streamlit Secrets.")
+    st.error("API key missing! Add it to Streamlit Secrets.")
     st.stop()
 
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
@@ -20,7 +20,7 @@ def extract_text(file):
     if file.type == "application/pdf":
         reader = PyPDF2.PdfReader(file)
         return " ".join(page.extract_text() for page in reader.pages if page.extract_text())
-    elif file.type.endswith('document'):
+    elif file.type.endswith("document"):
         return docx2txt.process(file)
     return file.read().decode()
 
@@ -34,7 +34,7 @@ def analyze_resume(jd, resume_text):
     Resume:
     {resume_text}
 
-    Return a JSON with keys:
+    Return a JSON object with the following keys:
     - "score" (0-100)
     - "matches" (list of top 3 skills)
     - "gaps" (list of top 3 missing)
@@ -42,122 +42,116 @@ def analyze_resume(jd, resume_text):
     """
     try:
         response = model.generate_content(prompt)
-        return eval(response.text)
+        result_text = response.text.strip()
+
+        # Remove markdown code formatting if any
+        if result_text.startswith("```json"):
+            result_text = result_text.replace("```json", "").replace("```", "").strip()
+
+        result = json.loads(result_text)
+        return result
     except Exception as e:
-        st.error(f"Analysis failed: {str(e)}")
+        st.error(f"Resume analysis failed: {e}")
         return None
 
 def generate_email(candidate, jd):
     prompt = f"""
     Write a professional outreach email for this candidate:
     Name: {candidate.get('name', 'Candidate')}
-    Score: {candidate['score']}/100
-    Matches: {', '.join(candidate['matches'])}
+    Score: {candidate.get('score', 'N/A')}/100
+    Matches: {', '.join(candidate.get('matches', []))}
 
     Job: {jd}
     """
-    return model.generate_content(prompt).text
+    try:
+        return model.generate_content(prompt).text
+    except Exception as e:
+        return f"Email generation failed: {str(e)}"
 
 # --- Streamlit UI ---
-st.set_page_config(layout="wide", page_title="RecruitAI Pro")
+st.set_page_config(page_title="RecruitAI Pro", layout="wide")
 st.title("🚀 RecruitAI Pro - End-to-End Hiring Assistant")
 
 # --- Step 1: Upload Job Description ---
-st.subheader("📋 1. Upload Job Description")
-jd_file = st.file_uploader("Upload JD (PDF/DOCX)", type=["pdf", "docx"], key="jd")
+st.header("📋 Step 1: Upload Job Description")
+jd_file = st.file_uploader("Upload JD (PDF or DOCX)", type=["pdf", "docx"], key="jd")
 if jd_file:
     jd_text = extract_text(jd_file)
-    if 'jd' not in st.session_state:
-        st.session_state.jd = jd_text
+    if 'jd_text' not in st.session_state:
+        st.session_state.jd_text = jd_text
+    st.text_area("Parsed JD", jd_text[:2000] + "...", height=250)
 
-    st.text_area("Parsed JD", jd_text[:2000] + "...", height=200)
+# --- Step 2: Upload and Analyze Resumes ---
+if 'jd_text' in st.session_state:
+    st.header("📚 Step 2: Upload Resumes for Batch Analysis")
+    resumes = st.file_uploader("Upload multiple resumes", type=["pdf", "docx", "txt"], accept_multiple_files=True)
 
-# --- Step 2: Resume Upload & Analysis ---
-if 'jd' in st.session_state:
-    st.subheader("📚 2. Upload Resumes for Analysis")
-    resumes = st.file_uploader("Upload Multiple Resumes", type=["pdf", "docx", "txt"], accept_multiple_files=True)
-
-    if resumes and st.button("Analyze Resumes"):
+    if resumes and st.button("Analyze Batch"):
         st.session_state.candidates = []
-        with st.spinner(f"Analyzing {len(resumes)} resumes..."):
+        with st.spinner("Analyzing resumes..."):
             for resume in resumes:
-                text = extract_text(resume)
-                analysis = analyze_resume(st.session_state.jd, text)
-
-                if analysis and isinstance(analysis, dict):
-                    candidate_data = {
-                        'name': resume.name.split('.')[0],
-                        'score': analysis.get('score', 0),
-                        'matches': analysis.get('matches', []),
-                        'gaps': analysis.get('gaps', []),
-                        'summary': analysis.get('summary', ''),
-                        'resume': text[:500] + "..."
-                    }
-                    st.session_state.candidates.append(candidate_data)
-                    st.success(f"{resume.name} analyzed.")
-                else:
-                    st.warning(f"Invalid response for {resume.name}")
-                    st.json(analysis)
+                resume_text = extract_text(resume)
+                result = analyze_resume(st.session_state.jd_text, resume_text)
+                if result:
+                    result['name'] = resume.name.split('.')[0]
+                    result['resume'] = resume_text[:500] + "..."
+                    st.session_state.candidates.append(result)
 
 # --- Step 3: Results Dashboard ---
 if 'candidates' in st.session_state and st.session_state.candidates:
-    st.subheader("📊 3. Candidate Evaluation Dashboard")
+    st.header("📊 Step 3: Candidate Evaluation Dashboard")
 
     df = pd.DataFrame(st.session_state.candidates)
-    try:
-        df = df[['name', 'score', 'matches', 'gaps']]
-        st.dataframe(df.sort_values('score', ascending=False),
+
+    # Only show required columns if present
+    required_cols = ['name', 'score', 'matches', 'gaps']
+    present_cols = [col for col in required_cols if col in df.columns]
+
+    if present_cols:
+        st.dataframe(df[present_cols].sort_values('score', ascending=False), 
                      use_container_width=True,
                      column_config={
                          "score": st.column_config.ProgressColumn(
-                             "Match Score",
-                             help="JD match percentage",
-                             format="%d%%",
-                             min_value=0,
-                             max_value=100,
-                         )
+                             "Match Score", help="JD match percentage", format="%d%%",
+                             min_value=0, max_value=100)
                      })
-    except KeyError as e:
-        st.error(f"Dataframe column error: {e}")
-        st.write(df)
 
-    selected = st.selectbox("🔍 View Candidate Details", df['name'])
+    selected = st.selectbox("Select candidate to view details", df['name'])
     candidate = next(c for c in st.session_state.candidates if c['name'] == selected)
 
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown(f"### {selected} ({candidate['score']}/100)")
-        st.markdown("**✅ Matches:** " + ", ".join(candidate['matches']))
-        st.markdown("**⚠️ Gaps:** " + ", ".join(candidate['gaps']))
-        st.text_area("Summary", candidate['summary'], height=150)
+        st.subheader(f"{selected} - {candidate.get('score', 0)} / 100")
+        st.markdown("**✅ Matches:** " + ", ".join(candidate.get('matches', [])))
+        st.markdown("**⚠️ Gaps:** " + ", ".join(candidate.get('gaps', [])))
+        st.text_area("Summary", candidate.get('summary', 'N/A'), height=150)
 
     with col2:
-        st.markdown("### ✉️ Outreach Tools")
+        st.subheader("✉️ Outreach Tools")
         if st.button("Generate Email Template"):
-            st.session_state.email = generate_email(candidate, st.session_state.jd)
+            st.session_state.email = generate_email(candidate, st.session_state.jd_text)
         if 'email' in st.session_state:
             st.text_area("Email Draft", st.session_state.email, height=200)
             st.download_button("Download Email", st.session_state.email, file_name=f"email_{selected}.txt")
 
-# --- Step 4: Export ---
-if 'candidates' in st.session_state and st.session_state.candidates:
-    st.subheader("📤 4. Export Results")
+# --- Step 4: Export Results ---
+if 'candidates' in st.session_state:
+    st.header("📤 Step 4: Export Results")
 
-    df_export = pd.DataFrame(st.session_state.candidates)
-    excel = df_export.to_excel(index=False)
+    df = pd.DataFrame(st.session_state.candidates)
+    excel = df.to_excel(index=False, engine='openpyxl')
     b64 = base64.b64encode(excel).decode()
 
-    st.download_button(
-        label="📥 Export to Excel",
+    st.download_button("📥 Export to Excel",
         data=excel,
         file_name=f"candidate_report_{datetime.now().date()}.xlsx",
         mime="application/vnd.ms-excel"
     )
 
-    st.markdown("### 🔗 ATS Integration (Coming Soon)")
-    st.selectbox("Select ATS", ["Greenhouse", "Lever", "Workday"])
+    st.subheader("🔗 ATS Integration (Mockup)")
+    st.selectbox("Choose ATS", ["Greenhouse", "Lever", "Workday"])
     st.button("Sync Selected Candidates")
 
-# --- Debugging ---
-with st.expander("🔧 Debug (Dev Only)"):
+# --- Debug ---
+with st.expander("🧪 Debug Info"):
     st.write(st.session_state)
