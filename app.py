@@ -27,7 +27,7 @@ def extract_text(file):
 
 def analyze_resume(jd, resume_text):
     prompt = f"""
-    Analyze this resume against the job description:
+    You are a senior recruiter. Analyze this resume against the job description:
 
     Job Description:
     {jd}
